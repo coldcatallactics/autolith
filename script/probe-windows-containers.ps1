@@ -42,8 +42,12 @@ if ($LASTEXITCODE -ne 0 -or -not $script:imageId.StartsWith('sha256:')) {
     throw 'Could not resolve the exact container image.'
 }
 Write-Host "Container image: $Image $script:imageId"
-$gitExecutable = (Get-Command git.exe -CommandType Application).Source
+$gitExecutable = (Get-Command git.exe -CommandType Application | Select-Object -First 1).Source
 $gitRoot = Split-Path (Split-Path $gitExecutable -Parent) -Parent
+if (-not (Test-Path -LiteralPath (Join-Path $gitRoot 'cmd/git.exe') -PathType Leaf)) {
+    throw "Could not identify the native Git installation from $gitExecutable."
+}
+Write-Host "Host Git executable: $gitExecutable"
 $workspace = Join-Path $root 'workspace'
 $private = Join-Path $root 'private'
 $readOnly = Join-Path $root 'read-only'
