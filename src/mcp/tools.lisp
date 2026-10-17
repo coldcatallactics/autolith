@@ -603,8 +603,9 @@
             mcp-server-runtime-configuration :type mcp-server-configuration
             :documentation "The native immutable server configuration.")
            (registration-source :initarg :registration-source :reader
-            mcp-server-runtime-registration-source :type keyword :documentation
-            "The source layer providing this effective server.")
+            mcp-server-runtime-registration-source :type
+            registration-source-designator :documentation
+            "The layer and optional plugin providing this effective server.")
            (provider-namespace :initarg :provider-namespace :reader
             mcp-server-runtime-provider-namespace :type non-empty-string
             :documentation "The deterministic provider namespace for this server."))
@@ -1811,7 +1812,9 @@ retained value is credential-redacted or projected."
             (tools (mcparen:mcp-discovery-snapshot-tools snapshot))
             (task-required-count (mcp-tools--task-required-tool-count tools)))
        (list :name (mcparen:mcp-discovery-snapshot-name snapshot) :source
-             (mcp-server-runtime-registration-source runtime) :transport
+             (registration-source-layer
+              (mcp-server-runtime-registration-source runtime))
+             :transport
              (mcp-tools--transport-kind configuration) :required-p
              (mcp-server-configuration-required-p configuration) :state
              (mcparen:mcp-discovery-snapshot-state snapshot) :tool-count
@@ -2061,7 +2064,11 @@ retained value is credential-redacted or projected."
        (and (typep tool 'mcp-provider-tool)
             (eq (mcp-managed-tool-manager tool) manager))))
     (dolist (tool effective-replacements)
-      (tool-registry-register registry tool)))
+      (tool-registry-register
+       registry tool
+       :source
+       (mcp-server-runtime-registration-source
+        (mcp-provider-tool-runtime tool)))))
   registry)
 
 (-> mcp-tool-registry--current-p
@@ -2223,7 +2230,11 @@ retained value is credential-redacted or projected."
        '("server" "name"))
       :manager manager))
     (dolist (tool (mcp-tools--manager-tool-objects manager))
-      (tool-registry-register registry tool))
+      (tool-registry-register
+       registry tool
+       :source
+       (mcp-server-runtime-registration-source
+        (mcp-provider-tool-runtime tool))))
     (setf (mcp-registry-binding-reconciled-revisions binding)
           (mcp-manager-tool-revisions manager)))
   registry)

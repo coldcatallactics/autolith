@@ -4,7 +4,7 @@
 
 (-> layered-registry-replace
     (list t &key (:key-function function) (:source-function function)
-              (:key-test function) (:source keyword))
+              (:key-test function) (:source registration-source-designator))
     list)
 (defun layered-registry-replace
     (registrations replacement &key key-function source-function key-test source)
@@ -26,7 +26,7 @@ The replacement keeps the existing position; otherwise it is appended."
 
 (-> layered-registry-remove
     (list t &key (:key-function function) (:source-function function)
-              (:key-test function) (:source keyword))
+              (:key-test function) (:source registration-source-designator))
     list)
 (defun layered-registry-remove
     (registrations key &key key-function source-function key-test source)
@@ -37,7 +37,7 @@ The replacement keeps the existing position; otherwise it is appended."
           (eq source (funcall source-function registration))))
    registrations))
 
-(-> layered-registry-remove-source (list keyword function) list)
+(-> layered-registry-remove-source (list registration-source-designator function) list)
 (defun layered-registry-remove-source (registrations source source-function)
   "Return REGISTRATIONS without any layer attributed to SOURCE."
   (remove source registrations :key source-function :test #'eq))

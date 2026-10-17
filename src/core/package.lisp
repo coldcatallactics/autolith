@@ -1283,6 +1283,7 @@
                 #:priority-queue-push
                 #:make-ordered-map
                 #:ordered-map
+                #:ordered-map-delete
                 #:ordered-map-delete-if
                 #:ordered-map-get
                 #:ordered-map-map

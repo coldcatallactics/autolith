@@ -95,6 +95,11 @@
   test-make-identifier
   test-configuration-source-platform-reading)
 
+(define-test-suite registration-source
+  test-registration-source-identity
+  test-registration-source-tool-registry
+  test-registration-source-scoped-removal)
+
 (define-test-suite fullscreen
   test-terminal-fullscreen-viewport
   test-terminal-fullscreen-new-conversation
@@ -546,6 +551,7 @@
 
 (define-test-suite tool
   test-tool-registry
+  test-tool-argument-transport-names
   test-tool-result-overflow
   test-workspace-tools
   test-workspace-tool-outside-paths)

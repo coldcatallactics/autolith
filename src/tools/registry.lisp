@@ -681,6 +681,71 @@ spilling is unavailable, in which case the tail is discarded as before.")
   "Leave an ordinary stateless TOOL unchanged."
   nil)
 
+(-> tool--argument-name-canonical-form (string) string)
+(defun tool--argument-name-canonical-form (name)
+  "Return NAME as one lowercase identifier without separator characters.
+
+A transport can deliver BASE_REVISION or startLine where the declared
+schema says BASE-REVISION or START-LINE. Lowercasing NAME and dropping
+its hyphen and underscore characters compares those spellings."
+  (string-downcase
+   (remove-if (lambda (character)
+                (member character '(#\- #\_) :test #'char=))
+              name)))
+
+(-> tool--equivalent-argument-name-p (string string) boolean)
+(defun tool--equivalent-argument-name-p (left right)
+  "Return true when LEFT and RIGHT name one tool argument.
+
+A transport can deliver BASE_REVISION or startLine where the declared
+schema says BASE-REVISION or START-LINE. Equal canonical forms name one
+argument."
+  (string= (tool--argument-name-canonical-form left)
+           (tool--argument-name-canonical-form right)))
+
+(-> tool--supplied-argument-value
+    (json-object string) (values t boolean))
+(defun tool--supplied-argument-value (arguments declared-name)
+  "Return the value ARGUMENTS supplies for DECLARED-NAME, when unambiguous.
+
+The transport can spell DECLARED-NAME with other case or with an
+underscore in place of a hyphen. An ambiguous spelling supplies no value."
+  (let ((candidates '()))
+    (maphash (lambda (name value)
+               (when (and (not (string= name declared-name))
+                          (tool--equivalent-argument-name-p name declared-name))
+                 (push (cons name value) candidates)))
+             arguments)
+    (if (= (length candidates) 1)
+        (values (cdr (first candidates)) t)
+        (values nil nil))))
+
+(-> tool--declared-argument-object (tool t) t)
+(defun tool--declared-argument-object (tool arguments)
+  "Return ARGUMENTS with every property name TOOL declares bound.
+
+A transport can rename an argument. Copy such a value to the name TOOL
+declares, so required-name validation and argument lookup agree with
+TOOL's own schema. An ambiguous rename stays unbound."
+  (if (not (json-object-p arguments))
+      arguments
+      (let ((properties (json-get (tool-parameters tool) "properties"))
+            (declared (json-object)))
+        (maphash (lambda (name value)
+                   (setf (gethash name declared) value))
+                 arguments)
+        (when (json-object-p properties)
+          (maphash
+           (lambda (name schema)
+             (declare (ignore schema))
+             (unless (nth-value 1 (gethash name declared))
+               (multiple-value-bind (value present-p)
+                   (tool--supplied-argument-value arguments name)
+                 (when present-p
+                   (setf (gethash name declared) value)))))
+           properties))
+        declared)))
+
 (-> tool-argument (json-object string &key (:required boolean)) t)
 (defun tool-argument (arguments name &key required)
   "Return NAME from ARGUMENTS, signaling TOOL-ERROR when REQUIRED and absent."
@@ -846,6 +911,12 @@ spilling is unavailable, in which case the tail is discarded as before.")
     :type ordered-map
     :documentation
     "Canonical dotted tool names mapped to tools in presentation order.")
+   (sources
+    :initform (make-ordered-map :test #'equal)
+    :reader tool-registry-source-map
+    :type ordered-map
+    :documentation
+    "Canonical dotted tool names mapped to the registration source that added them.")
    (namespace-descriptions
     :initform (make-hash-table :test #'equal)
     :reader tool-registry-namespace-descriptions
@@ -1033,20 +1104,48 @@ spilling is unavailable, in which case the tail is discarded as before.")
    (lambda (tool)
      (tool-runtime-prune-checkpoint-state tool registry))))
 
-(-> tool-registry-register (tool-registry tool) tool)
-(defun tool-registry-register (registry tool)
-  "Register TOOL, preserving an existing name's presentation position."
-  (ordered-map-set (tool-registry-tool-map registry)
-                   (tool-canonical-name tool)
-                   tool))
+(-> tool-registry-register
+    (tool-registry tool &key (:source registration-source-designator))
+    tool)
+(defun tool-registry-register (registry tool &key (source (current-registration-source)))
+  "Register TOOL under SOURCE and return TOOL.
+
+The registry records each tool's source, so a plugin removes its own tools as a
+group. An existing name keeps its presentation position."
+  (let ((canonical-name (tool-canonical-name tool)))
+    (ordered-map-set (tool-registry-tool-map registry) canonical-name tool)
+    (ordered-map-set (tool-registry-source-map registry) canonical-name
+                     (registration-source-coerce source)))
+  tool)
+
+(-> tool-registry-source (tool-registry tool) (option registration-source-designator))
+(defun tool-registry-source (registry tool)
+  "Return the registration source that added TOOL to REGISTRY, when present."
+  (ordered-map-get (tool-registry-source-map registry)
+                   (tool-canonical-name tool)))
+
+(-> tool-registry-remove-source (tool-registry registration-source-designator) list)
+(defun tool-registry-remove-source (registry source)
+  "Remove every tool REGISTRY attributes to SOURCE and return the removed tools."
+  (let ((source (registration-source-coerce source))
+        (removed nil))
+    (dolist (tool (tool-registry-tools registry))
+      (when (eq source (tool-registry-source registry tool))
+        (push tool removed)))
+    (dolist (tool removed)
+      (let ((canonical-name (tool-canonical-name tool)))
+        (ordered-map-delete (tool-registry-tool-map registry) canonical-name)
+        (ordered-map-delete (tool-registry-source-map registry) canonical-name)))
+    (nreverse removed)))
 
 (-> tool-registry-delete-if (tool-registry function) tool-registry)
 (defun tool-registry-delete-if (registry predicate)
   "Delete every tool satisfying PREDICATE from REGISTRY and return REGISTRY."
   (ordered-map-delete-if
    (lambda (canonical-name tool)
-     (declare (ignore canonical-name))
-     (funcall predicate tool))
+     (when (funcall predicate tool)
+       (ordered-map-delete (tool-registry-source-map registry) canonical-name)
+       t))
    (tool-registry-tool-map registry))
   registry)
 
@@ -1229,9 +1328,12 @@ signals with the candidate canonical names."
                      :message (format nil "Unknown tool ~A." canonical-name)
                      :tool-name canonical-name))
              (let ((arguments
-                     (tool-decode-arguments
+                     (tool--declared-argument-object
                       tool
-                      (or (json-get call "arguments") "{}"))))
+                      (tool-decode-arguments
+                       tool
+                       (or (json-get call "arguments") "{}")))))
+
                (unless (json-object-p arguments)
                  (error 'tool-error
                         :message (format nil "Arguments for ~A are not a JSON object."
