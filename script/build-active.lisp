@@ -57,7 +57,9 @@
                (symbol-value library-directories)
                :test #'equal)))
   (asdf:load-asd (merge-pathnames "autolith.asd" source-root))
-  (asdf:load-system :autolith)
+  (let ((*load-verbose* t)
+        (*compile-verbose* t))
+    (asdf:load-system :autolith :verbose t))
   (cond
     (child-core
      (format t "~&Saving the preloaded active image.~%")
