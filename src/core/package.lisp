@@ -1349,6 +1349,7 @@
            #:request-context-goal-context
            #:request-context-latest-user-text
            #:request-context-tool-namespaces
+           #:redact
            #:register-application-command
            #:release-server-main
            #:run-tests
