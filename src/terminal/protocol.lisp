@@ -83,6 +83,11 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
     :type     list
     :documentation
     "Plain-text prefixes of the transcript lines that open user and assistant messages.")
+   (program-status
+    :initform      '(:idle nil)
+    :accessor      terminal-ui-program-status
+    :type          list
+    :documentation "The root program status and optional blocked kind last sent to the terminal.")
    (prompt-marker-state
     :initform      ':closed
     :accessor      terminal-ui-prompt-marker-state
@@ -446,6 +451,94 @@ Autolith repaints its own prompt, so prompt starts disable terminal redraw."
       (terminal--write terminal (window-title-sequence safe))
       (terminal-flush terminal)
       t)))
+
+
+;;;; -- Program Status Protocol --
+
+(-> terminal--program-status-text (string (integer 0)) string)
+(defun terminal--program-status-text (text limit)
+  "Encode control-free TEXT as base64 UTF-8 within LIMIT decoded bytes."
+  (let ((bytes 0))
+    (usb8-array-to-base64-string
+     (utf8-string-to-octets
+      (with-output-to-string (output)
+        (loop for character across text
+              for code = (char-code character)
+              unless (or (< code 32) (<= 127 code 159))
+                do (let ((size (length (utf8-string-to-octets (string character)))))
+                     (when (> (+ bytes size) limit)
+                       (return))
+                     (incf bytes size)
+                     (write-char character output))))))))
+
+(-> terminal--program-status-id-p (t) boolean)
+(defun terminal--program-status-id-p (id)
+  "Return true when ID is a bounded OSC 7501 record path."
+  (and (stringp id)
+       (<= 1 (length id) 128)
+       (loop with depth = 0
+             for start = 0 then (1+ end)
+             for end = (or (position #\/ id :start start) (length id))
+             always (and (<= (incf depth) 8)
+                         (<= 1 (- end start) 32)
+                         (loop for index from start below end
+                               for character = (char id index)
+                               always (or (find character "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.+-") nil)))
+             until (= end (length id)))
+       t))
+
+(-> terminal--program-status-record-sequence
+    ((option string) keyword &key (:kind (option keyword))
+     (:message (option string)) (:title (option string)) (:progress t))
+    string)
+(defun terminal--program-status-record-sequence (id state &key kind message title progress)
+  "Return one OSC 7501 report for optional record ID and explicit STATE."
+  (let ((name (ecase state
+                (:idle
+                 "idle")
+                (:working
+                 "working")
+                (:done
+                 "done")
+                (:blocked
+                 "blocked")
+                (:error
+                 "error")
+                (:clear
+                 "clear"))))
+    (assert (or (null id) (terminal--program-status-id-p id)))
+    (assert (if (eq state ':blocked)
+                (member kind '(:permission :question :auth))
+                (null kind)))
+    (assert (or (null progress) (member state '(:working :blocked))))
+    (format nil "~C]7501;app=autolith:state=~A~A~A~A~A~A~C\\"
+            #\Escape name
+            (if id (format nil ":id=~A" id) "")
+            (if kind (format nil ":kind=~(~A~)" kind) "")
+            (if (typep progress '(integer 0 100)) (format nil ":progress=~D" progress) "")
+            (if message (format nil ":msg=~A" (terminal--program-status-text message 2048)) "")
+            (if title (format nil ":title=~A" (terminal--program-status-text title 192)) "")
+            #\Escape)))
+
+(-> terminal--program-status-sequence
+    (keyword &key (:kind (option keyword)) (:message (option string))
+                  (:title (option string)) (:progress t))
+    string)
+(defun terminal--program-status-sequence (state &key kind message title progress)
+  "Return one bounded OSC 7501 root report, omitting invalid progress values."
+  (terminal--program-status-record-sequence
+   nil state :kind kind :message message :title title :progress progress))
+
+(-> terminal--program-status-outcome ((integer 0)) keyword)
+(defun terminal--program-status-outcome (status)
+  "Return the completion state for STATUS, with 130 denoting cancellation."
+  (case status
+    (0
+     ':done)
+    (130
+     ':idle)
+    (otherwise
+     ':error)))
 
 
 ;;;; -- Presentation Modes --
